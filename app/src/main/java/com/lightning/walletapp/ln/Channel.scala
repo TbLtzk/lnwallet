@@ -501,7 +501,6 @@ abstract class Channel extends StateMachine[ChannelData] { me =>
             commitments.remoteParams.fundingPubkey, closingSigned.signature, remoteClosingSig)
 
         Scripts checkValid signedClose match {
-          case Failure(why) => throw new LightningException(why.getMessage)
           case Success(okClose) if remoteClosingFee == localClosingSigned.feeSatoshis =>
             // Our current and their proposed fees are equal for this tx, can broadcast
             startMutualClose(neg, okClose.tx)
@@ -513,6 +512,11 @@ abstract class Channel extends StateMachine[ChannelData] { me =>
               val d1 = me STORE neg.copy(lastSignedTx = Some(okClose), localProposals = nextProposed +: neg.localProposals)
               me UPDATA d1 SEND nextProposed.localClosingSigned
             }
+
+          case Failure(why) =>
+            startLocalClose(neg)
+            // Show error details to user
+            throw new LightningException(why.getMessage)
         }
 
 
