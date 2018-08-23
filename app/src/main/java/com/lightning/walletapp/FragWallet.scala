@@ -35,9 +35,11 @@ import com.lightning.walletapp.lnutils.IconGetter.isTablet
 import org.bitcoinj.wallet.SendRequest.childPaysForParent
 import android.support.v4.content.Loader
 import android.support.v7.widget.Toolbar
+import org.bitcoinj.script.ScriptPattern
 import android.support.v4.app.Fragment
 import android.app.AlertDialog
 import android.content.Intent
+import language.postfixOps
 import android.net.Uri
 
 
@@ -348,10 +350,10 @@ class FragWalletWorker(val host: WalletActivity, frag: View) extends SearchBar w
 
         case 0 \ Some(runnable) =>
           val bld = baseBuilder(outgoingTitle.html, detailsWrapper)
-          def useOnchain(alert: AlertDialog) = rm(alert)(runnable.run)
           // Offer a fallback onchain address if payment was not successfull
           if (info.actualStatus != FAILURE) showForm(negBuilder(dialog_ok, outgoingTitle.html, detailsWrapper).create)
-          else mkCheckFormNeutral(alert => rm(alert)(none), doSend(rd), useOnchain, bld, dialog_ok, noRetry, dialog_pay_onchain)
+          else mkCheckFormNeutral(alert => rm(alert)(none), doSend(rd), alert => rm(alert)(runnable.run), bld, dialog_ok,
+            noRetry, dialog_pay_onchain)
 
         case 0 \ None =>
           val bld = baseBuilder(outgoingTitle.html, detailsWrapper)
@@ -388,19 +390,21 @@ class FragWalletWorker(val host: WalletActivity, frag: View) extends SearchBar w
 
     def generatePopup = {
       val confs = app.plurOrZero(txsConfs, txDepth)
+      val defaultColor = if (wrap.visibleValue.isPositive) coloredIn else coloredOut
       val detailsWrapper = host.getLayoutInflater.inflate(R.layout.frag_tx_btc_details, null)
       val viewTxOutside = detailsWrapper.findViewById(R.id.viewTxOutside).asInstanceOf[Button]
       val viewShareBody = detailsWrapper.findViewById(R.id.viewShareBody).asInstanceOf[Button]
       val lst = host.getLayoutInflater.inflate(R.layout.frag_center_list, null).asInstanceOf[ListView]
 
-      val defaultMarking = if (wrap.visibleValue.isPositive) coloredIn else coloredOut
-      val humanOutputs = wrap directedScriptPubKeysWithValueTry wrap.visibleValue.isPositive collect {
-        case Success(pks \ value) if pks.isSentToP2WSH => P2WSHData(value, pks).destination(coloredChan).html
-        case Success(pks \ value) => AddrData(value, pks getToAddress app.params).destination(defaultMarking).html
+      val humanOutputs = wrap.tx.getOutputs.asScala collect {
+        case output if output.isMine(app.kit.wallet) == wrap.visibleValue.isPositive => Try(output.getScriptPubKey) map {
+          case scriptPubKey if scriptPubKey.isSentToP2WSH => P2WSHData(output.getValue, scriptPubKey).destination(coloredChan).html
+          case scriptPubKey => AddrData(output.getValue, scriptPubKey getToAddress app.params).destination(defaultColor).html
+        } toOption
       }
 
       val views = new ArrayAdapter(host, R.layout.frag_top_tip, R.id.titleTip,
-        humanOutputs.toArray) { override def isEnabled(pos: Int) = false }
+        humanOutputs.flatten.toArray) { override def isEnabled(pos: Int) = false }
 
       lst setHeaderDividersEnabled false
       lst addHeaderView detailsWrapper
