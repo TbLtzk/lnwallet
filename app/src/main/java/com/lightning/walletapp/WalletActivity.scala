@@ -2,6 +2,7 @@ package com.lightning.walletapp
 
 import android.view._
 import android.widget._
+import scala.concurrent.duration._
 import com.lightning.walletapp.ln._
 import android.text.format.DateUtils._
 import com.lightning.walletapp.Utils._
@@ -90,6 +91,7 @@ class WalletActivity extends NfcReaderActivity with ScanActivity { me =>
   }
 
   override def onDestroy = wrap(super.onDestroy)(stopDetecting)
+  override def onResume = wrap(super.onResume)(me returnToBase null)
   override def onOptionsItemSelected(m: MenuItem) = runAnd(true) {
     if (m.getItemId == R.id.actionSettings) makeSettingsForm
   }
@@ -132,7 +134,14 @@ class WalletActivity extends NfcReaderActivity with ScanActivity { me =>
   // EXTERNAL DATA CHECK
 
   def checkTransData = {
-    returnToBase(view = null)
+    app.TransData.value match {
+      case _: LNUrl => me returnToBase null
+      case _: Address => me returnToBase null
+      case _: BitcoinURI => me returnToBase null
+      case _: PaymentRequest => me returnToBase null
+      case _ => // Switching activity
+    }
+
     app.TransData checkAndMaybeErase {
       case _: Started => me goTo classOf[LNStartActivity]
       case _: NodeAnnouncement => me goTo classOf[LNStartFundActivity]
@@ -142,7 +151,7 @@ class WalletActivity extends NfcReaderActivity with ScanActivity { me =>
 
       case pr: PaymentRequest =>
         val okChans = app.ChannelManager.notClosingOrRefunding
-        if (okChans.nonEmpty) FragWallet.worker sendPayment pr else {
+        if (okChans.nonEmpty) FragWallet.worker.sendPayment(pr) else {
           // TransData should be set to batch or null to erase previous
           app.TransData.value = TxWrap findBestBatch pr getOrElse null
           me goTo classOf[LNStartActivity]
@@ -150,12 +159,9 @@ class WalletActivity extends NfcReaderActivity with ScanActivity { me =>
         }
 
       case lnUrl: LNUrl =>
-        app toast ln_url_resolving
-        lnUrl.resolve.foreach(lnUrlDataItem => {
-          // Happens in some time so lnUrl is gone
-          app.TransData.value = lnUrlDataItem
-          me goTo classOf[LNStartActivity]
-        }, Tools.errlog)
+        lnUrl.resolve.doOnSubscribe(app toast ln_url_resolving).delay(1.second)
+          .map(obtainedRemoteData => app.TransData.value = obtainedRemoteData)
+          .foreach(_ => me goTo classOf[LNStartActivity], Tools.errlog)
 
       case _ =>
     }
